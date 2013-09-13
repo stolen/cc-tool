@@ -24,7 +24,10 @@ public:
 	virtual void flash_write(const DataSectionStore &sections);
 	virtual void flash_read_block(size_t offset, size_t size, ByteVector &data);
 
-	virtual bool lock_write(const ByteVector &data);
+	virtual bool config_write(const ByteVector &mac_address, const ByteVector &lock_data);
+
+	virtual void convert_lock_data(const StringVector& qualifiers,
+			ByteVector& lock_data);
 
 	CC_251x_111x(USB_Device &programmer, ProgressWatcher &pw);
 };

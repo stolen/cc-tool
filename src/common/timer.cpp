@@ -21,15 +21,15 @@ Timer::Timer()
 //==============================================================================
 void Timer::start()
 {
-	start_time_ = get_tick_count(); elapsed_time_ = 0;
+	start_time_ = get_tick_count();
 }
 
 //==============================================================================
-String Timer::elapsed_time()
+String Timer::elapsed_time() const
 {
-	elapsed_time_ = get_tick_count() - start_time_;
+	uint_t elapsed_time = get_tick_count() - start_time_;
 
 	char buf[16];
-	sprintf(buf, "%.02f s.", (float)elapsed_time_ / 1000);
+	sprintf(buf, "%.02f s.", (float)elapsed_time / 1000);
 	return buf;
 }

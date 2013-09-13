@@ -22,8 +22,8 @@ public:
 	void do_on_read_progress(const OnProgress::slot_type &slot);
 	void do_on_write_progress(const OnProgress::slot_type &slot);
 
-	void read_progress(uint_t done_chunk);
-	void write_progress(uint_t done_chunk);
+	void read_progress(uint_t done_chunk_size);
+	void write_progress(uint_t done_chunk_size);
 
 	void read_start(size_t total_size);
 	void read_finish();

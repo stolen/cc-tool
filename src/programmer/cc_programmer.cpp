@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include "cc_programmer.h"
 #include "cc_251x_111x.h"
-#include "cc_253x_2540.h"
+#include "cc_253x_254x.h"
 #include "cc_243x.h"
 #include "log.h"
 
@@ -19,9 +19,14 @@ const uint_t DEFAULT_TIMEOUT = 3000;
 const uint_t MAX_ERASE_TIME	= 8000;
 
 const static USB_DeviceID DeviceTable[] = {
-	{ 0x0451, 0x16A2, "CC Debugger" },
-	{ 0x11A0, 0xDB20, "SmartRF04 Evaluation Board" },
-	{ 0x0451, 0x16A0, "SmartRF05 Evaluation Board" },
+	{ 0x0451, 0x16A2, 0x84, 0x04, "CC Debugger",
+			USB_DeviceID::PROTOCOL_TI },
+	{ 0x11A0, 0xDB20, 0x84, 0x04, "SmartRF04 Evaluation Board",
+			USB_DeviceID::PROTOCOL_TI },
+	{ 0x11A0, 0xEB20, 0x82, 0x02, "SmartRF04 Evaluation Board (Chinese)",
+			USB_DeviceID::PROTOCOL_CHIPCON },
+	{ 0x0451, 0x16A0, 0x84, 0x04, "SmartRF05 Evaluation Board",
+			USB_DeviceID::PROTOCOL_TI },
 };
 
 //==============================================================================
@@ -51,7 +56,7 @@ CC_Programmer::CC_Programmer()
 {
 	usb_device_.set_transfer_timeout(DEFAULT_TIMEOUT);
 
-	unit_drviers_.push_back(CC_UnitDriverPtr(new CC_253x_2540(usb_device_, pw_)));
+	unit_drviers_.push_back(CC_UnitDriverPtr(new CC_253x_254x(usb_device_, pw_)));
 	unit_drviers_.push_back(CC_UnitDriverPtr(new CC_251x_111x(usb_device_, pw_)));
 	unit_drviers_.push_back(CC_UnitDriverPtr(new CC_243x(usb_device_, pw_)));
 }
@@ -100,6 +105,12 @@ bool CC_Programmer::set_debug_interface_speed(CC_Programmer::InterfaceSpeed spee
 }
 
 //==============================================================================
+bool CC_Programmer::unit_set_flash_size(uint_t flash_size)
+{
+	return driver_->set_flash_size(flash_size);
+}
+
+//==============================================================================
 bool CC_Programmer::programmer_info(CC_ProgrammerInfo &info)
 {
 	if (opened())
@@ -113,6 +124,9 @@ bool CC_Programmer::programmer_info(CC_ProgrammerInfo &info)
 //==============================================================================
 void CC_Programmer::init_device()
 {
+	if (programmer_info_.usb_device.protocol == USB_DeviceID::PROTOCOL_CHIPCON)
+		usb_device_.reset_device();
+
 	usb_device_.set_configuration(1);
 	usb_device_.claim_interface(0);
 	request_device_info();
@@ -132,6 +146,7 @@ CC_Programmer::OpenResult CC_Programmer::open(uint_t bus, uint_t device)
 		if (descriptor.idProduct == item.product_id &&
 				descriptor.idVendor == item.vendor_id)
 		{
+			programmer_info_.usb_device = item;
 			init_device();
 			return OR_OK;
 		}
@@ -146,7 +161,7 @@ CC_Programmer::OpenResult CC_Programmer::open()
 	{
 		if (usb_device_.open_by_vid_pid(item.vendor_id, item.product_id))
 		{
-			programmer_info_.descripton = item.description;
+			programmer_info_.usb_device = item;
 			break;
 		}
 	}
@@ -177,7 +192,20 @@ void CC_Programmer::request_device_info()
 			device_descriptor.bcdDevice & 0xFF);
 	programmer_info_.debugger_id = DID;
 
-	usb_device_.string_descriptor_ascii(device_descriptor.iProduct, programmer_info_.name);
+	if (device_descriptor.iProduct > 0)
+		usb_device_.string_descriptor_ascii(device_descriptor.iProduct, programmer_info_.name);
+	else
+	{
+		foreach (const USB_DeviceID &item, DeviceTable)
+		{
+			if (device_descriptor.idProduct == item.product_id &&
+					device_descriptor.idVendor == item.vendor_id)
+			{
+				programmer_info_.name = item.description;
+				break;
+			}
+		}
+	}
 
 	const uint8_t USB_REQUEST_GET_STATE	= 0xC0;
 
@@ -206,11 +234,14 @@ void CC_Programmer::request_device_info()
 		}
 	}
 
-	if (!driver_ && unit_info_.ID)
+	if (!driver_ && unit_info_.ID > 0)
 	{
 		std::swap(info[0], info[1]);
 		unit_info_.name = "CC" + binary_to_hex(info, 2, "");
 	}
+
+	if (driver_)
+		driver_->set_programmer_ID(programmer_info_.usb_device);
 
 	log_add_programmer_info(programmer_info_);
 }
@@ -232,12 +263,16 @@ void CC_Programmer::enter_debug_mode()
 	log_info("programmer, enter debug mode");
 
 	const uint8_t USB_PREPARE_DEBUG_MODE = 0xC5;
-	const uint8_t USB_SET_CHIP_INFO = 0xC8;
 
 	usb_device_.control_write(LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_OUT,
 			USB_PREPARE_DEBUG_MODE, 0, 0, NULL, 0);
 
-	ByteVector command(0x30, ' ');
+	const uint8_t USB_SET_CHIP_INFO = 0xC8;
+	const size_t command_size =
+			programmer_info_.usb_device.protocol == USB_DeviceID::PROTOCOL_TI ?
+			0x30 : 0x20;
+
+	ByteVector command(command_size, ' ');
 	memcpy(&command[0x00], unit_info_.name.c_str(), unit_info_.name.size());
 	memcpy(&command[0x10], "DID:", 4);
 	memcpy(&command[0x15], programmer_info_.debugger_id.c_str(), programmer_info_.debugger_id.size());
@@ -298,7 +333,7 @@ bool CC_Programmer::unit_reset()
 //==============================================================================
 bool CC_Programmer::unit_erase()
 {
-	driver_->erase_start();
+	driver_->erase();
 
 	uint_t erase_timer = get_tick_count();
 	do
@@ -327,8 +362,38 @@ void CC_Programmer::unit_mac_address_read(size_t index, ByteVector &mac_address)
 }
 
 //==============================================================================
-void CC_Programmer::unit_mac_address_write(ByteVector &mac_address)
-{ }
+bool CC_Programmer::unit_config_write(ByteVector &mac_address, ByteVector &lock_data)
+{
+	pw_.enable(false);
+	return driver_->config_write(mac_address, lock_data);
+}
+
+//==============================================================================
+bool CC_Programmer::flash_image_embed_mac_address(DataSectionStore &sections,
+		const ByteVector &mac_address)
+{
+	return driver_->flash_image_embed_mac_address(sections, mac_address);
+}
+
+//==============================================================================
+bool CC_Programmer::flash_image_embed_lock_data(DataSectionStore &sections,
+		const ByteVector &lock_data)
+{
+	return driver_->flash_image_embed_lock_data(sections, lock_data);
+}
+
+//==============================================================================
+uint_t CC_Programmer::unit_lock_data_size() const
+{
+	return driver_->lock_data_size();
+}
+
+//==============================================================================
+void CC_Programmer::unit_convert_lock_data(const StringVector& qualifiers,
+		ByteVector& lock_data)
+{
+	driver_->convert_lock_data(qualifiers, lock_data);
+}
 
 //==============================================================================
 void CC_Programmer::unit_flash_read(ByteVector &flash_data)
@@ -361,13 +426,6 @@ void CC_Programmer::unit_flash_write(const DataSectionStore &sections)
 {
 	pw_.enable(true);
 	driver_->flash_write(sections);
-}
-
-//==============================================================================
-bool CC_Programmer::unit_lock_write(const ByteVector &lock_data)
-{
-	pw_.enable(false);
-	return driver_->lock_write(lock_data);
 }
 
 //==============================================================================

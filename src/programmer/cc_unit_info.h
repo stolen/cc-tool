@@ -26,8 +26,8 @@ struct Unit_ID
 struct UnitInfo
 {
 	enum Flags {
-		SUPPORT_USB = 0x01,
-		SUPPORT_MAC_ADDRESS = 0x02,
+		SUPPORT_USB = 0x01, 		// remove
+		SUPPORT_MAC_ADDRESS = 0x02, // remove, use mac_address_count to checck
 		SUPPORT_INFO_PAGE = 0x04
 	};
 
@@ -36,12 +36,15 @@ struct UnitInfo
 	uint8_t internal_ID; 	// read from chip
 	uint8_t revision;		// read from chip
 	uint_t flags;
+
 	uint_t flash_size; 		// in KB
 	uint_t max_flash_size; 	// in KB
+	UintVector flash_sizes;	// list of possible flash sizes, in KB
+
 	uint_t ram_size; 		// in KB
 	uint_t mac_address_count;
-	uint_t flash_page_size; // in KB // todo: remove
-	uint_t lock_size;		//
+	uint_t mac_address_size;
+	uint_t flash_page_size; // in KB
 
 	size_t actual_flash_size() const;
 
@@ -50,6 +53,7 @@ struct UnitInfo
 
 struct UnitCoreInfo
 {
+	size_t lock_size;		//
 	size_t flash_word_size;
 	size_t verify_block_size;
 	size_t write_block_size;
@@ -57,7 +61,7 @@ struct UnitCoreInfo
 	uint16_t dma0_cfg_offset;
 	uint16_t dma_data_offset;
 
-	// Xdata registers addresses;
+	// Xdata register addresses;
 	uint16_t memctr;
 	uint16_t fmap;
 	uint16_t rndl;
@@ -73,10 +77,14 @@ struct UnitCoreInfo
 	uint16_t dma_irq;
 
 	uint8_t fctl_write;
+	uint8_t fctl_erase;
 
 	UnitCoreInfo();
 };
 
 typedef std::list<Unit_ID> Unit_ID_List;
+
+void check_param(bool assert, const String& module, uint_t line);
+#define CHECK_PARAM(x) check_param(x, __FILE__, __LINE__)
 
 #endif // !_CC_UNIT_INFO_H_

@@ -16,14 +16,13 @@
 class Timer : boost::noncopyable
 {
 public:
-	String elapsed_time();
+	String elapsed_time() const;
 	Timer();
 
 private:
 	void start();
 
 	uint_t start_time_;
-	uint_t elapsed_time_;
 };
 
 #endif // !_TIMER_H_

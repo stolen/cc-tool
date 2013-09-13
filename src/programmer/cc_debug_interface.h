@@ -13,8 +13,7 @@
 
 #include "common.h"
 
-const uint8_t ENDPOINT_IN	= 0x84;
-const uint8_t ENDPOINT_OUT	= 0x04;
+const size_t CC_BREAKPOINT_COUNT	= 4;
 
 const uint8_t
 	DEBUG_STATUS_STACK_OVERFLOW		= 0x01,
@@ -47,8 +46,5 @@ const uint8_t
 	DEBUG_COMMAND_GET_BM		= 0x00,// ??
 	DEBUG_COMMAND_GET_CHIP_ID	= 0x68,
 	DEBUG_COMMAND_BURST_WRITE	= 0x80;
-
-#define LOBYTE(w) ((uint8_t)(w))
-#define HIBYTE(w) ((uint8_t)(((uint16_t)(w) >> 8) & 0xFF))
 
 #endif // !_CC_DEBUG_INTERFACE_H_

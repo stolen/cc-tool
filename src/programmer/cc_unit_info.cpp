@@ -17,7 +17,10 @@ UnitInfo::UnitInfo() :
 		revision(0),
 		flags(0),
 		flash_size(0),
+		max_flash_size(0),
 		ram_size(0),
+		mac_address_count(0),
+		mac_address_size(0),
 		flash_page_size(0)
 { }
 
@@ -28,3 +31,14 @@ UnitCoreInfo::UnitCoreInfo()
 //==============================================================================
 size_t UnitInfo::actual_flash_size() const
 {	return 	1024 * (flash_size ? flash_size : max_flash_size); }
+
+#define CHECK_PARAM(x) check_param(x, __FILE__, __LINE__)
+
+//==============================================================================
+void check_param(bool assert, const String& module, uint_t line)
+{
+	if (assert)
+		return;
+
+	throw std::runtime_error("internal error at " + module + ":" + number_to_string(line));
+}

@@ -15,22 +15,27 @@
 #include "usb/usb_device.h"
 #include "data/data_section_store.h"
 
-const size_t CC_BREAKPOINT_COUNT	= 4;
+struct USB_DeviceID
+{
+	enum { PROTOCOL_TI, PROTOCOL_CHIPCON };
+
+	uint16_t vendor_id;
+	uint16_t product_id;
+
+	uint8_t	 endpoint_in;
+	uint8_t	 endpoint_out;
+
+	char	 description[256];
+	uint_t	 protocol;
+};
 
 struct CC_ProgrammerInfo
 {
-	String name;
-	String descripton;
-	String debugger_id; // 4 unique digits
-	uint16_t fw_version;
-	uint16_t fw_revision;
-};
-
-struct USB_DeviceID
-{
-	uint16_t vendor_id;
-	uint16_t product_id;
-	char description[256];
+	String 		 name;
+	String 		 debugger_id; // 4 unique digits
+	uint16_t 	 fw_version;
+	uint16_t	 fw_revision;
+	USB_DeviceID usb_device;
 };
 
 struct CC_Breakpoint
@@ -61,6 +66,8 @@ public:
 	enum InterfaceSpeed { IS_SLOW, IS_FAST };
 	bool set_debug_interface_speed(InterfaceSpeed speed);
 
+	bool unit_set_flash_size(uint_t flash_size);
+
 	void unit_status(String &name, bool &supported) const;
 	bool unit_connect(UnitInfo &info);
 	void unit_close();
@@ -72,14 +79,26 @@ public:
 	void unit_read_info_page(ByteVector &info_page);
 
 	void unit_mac_address_read(size_t index, ByteVector &mac_address);
-	void unit_mac_address_write(ByteVector &mac_address);
 
 	void unit_flash_read(ByteVector &flash_data);
 	void unit_flash_write(const DataSectionStore &sections);
 
 	enum VerifyMethod { VM_BY_CRC, VM_BY_READ };
 	bool unit_flash_verify(const DataSectionStore &sections, VerifyMethod method);
-	bool unit_lock_write(const ByteVector &lock_data);
+
+	bool unit_config_write(ByteVector &mac_address, ByteVector &lock_data);
+
+	void unit_convert_lock_data(const StringVector& qualifiers,
+			ByteVector& lock_data);
+
+	uint_t unit_lock_data_size() const;
+
+	bool flash_image_embed_mac_address(DataSectionStore &sections,
+			const ByteVector &mac_address);
+
+	bool flash_image_embed_lock_data(DataSectionStore &sections,
+			const ByteVector &lock_data);
+
 
 	void do_on_flash_read_progress(const ProgressWatcher::OnProgress::slot_type&);
 	void do_on_flash_write_progress(const ProgressWatcher::OnProgress::slot_type&);
@@ -97,7 +116,7 @@ private:
 	CC_UnitDriverPtrList unit_drviers_;
 	CC_UnitDriverPtr driver_;
 	ProgressWatcher pw_;
-	CC_Breakpoint bps_[CC_BREAKPOINT_COUNT];
+	//CC_Breakpoint bps_[CC_BREAKPOINT_COUNT];
 };
 
 #endif // !_CC_PROGRAMMER_H_

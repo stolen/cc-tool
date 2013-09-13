@@ -274,14 +274,14 @@ void hex_file_load(const String &file_name,
 static void write_eof_record(std::ostream &out)
 {
 	out << ":00000001FF";
-	out << "\n";
+	out << "\r\n";
 }
 
 //==============================================================================
 static void write_data_record(std::ostream &out, uint_t address,
 		const uint8_t data[], size_t size)
 {
-	const uint8_t buffer[] = { size, address >> 8, address, 0x00 };
+	const uint8_t buffer[] = { LOBYTE(size), HIBYTE(address), LOBYTE(address), 0x00 };
 
 	uint8_t crc = 0;
 	crc = std::accumulate(buffer, buffer + ARRAY_SIZE(buffer), crc);
@@ -298,7 +298,7 @@ static void write_data_record(std::ostream &out, uint_t address,
 //==============================================================================
 static void write_segment_record(std::ostream &out, uint16_t address)
 {
-	const uint8_t buffer[] = { 0x02, 0x00, 0x00, 0x02, address >> 8, address };
+	const uint8_t buffer[] = { 0x02, 0x00, 0x00, 0x02, HIBYTE(address), LOBYTE(address) };
 
 	uint8_t crc = 0;
 	crc = 0x100 - std::accumulate(buffer, buffer + ARRAY_SIZE(buffer), crc);

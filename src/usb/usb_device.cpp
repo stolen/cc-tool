@@ -259,6 +259,12 @@ void USB_Device::set_debug_mode(DebugLevel level)
 }
 
 //==============================================================================
+void USB_Device::reset_device()
+{
+	libusb_reset_device(handle_);
+}
+
+//==============================================================================
 void USB_Device::claim_interface(uint_t interface_number)
 {
 	log_info("usb, claim interface %u", interface_number);
@@ -332,7 +338,7 @@ void USB_Device::control_write(uint8_t bmRequestType, uint8_t bRequest, uint16_t
 	bmRequestType |= LIBUSB_ENDPOINT_OUT;
 
 	log_info("usb, control write, request_type: %02Xh, request: %02Xh, value: %04Xh, index: %04Xh, count: %u",
-			bmRequestType, bRequest, wIndex, wValue, count);
+			bmRequestType, bRequest, wValue, wIndex, count);
 	if (count)
 		log_info("usb, control write, data: %s", binary_to_hex(data, count, " ").c_str());
 

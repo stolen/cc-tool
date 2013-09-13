@@ -25,6 +25,8 @@ public:
 
 	void set_transfer_timeout(uint_t timeout);
 
+	void reset_device();
+
 	void set_configuration(uint_t configuration); // throw
 	void claim_interface(uint_t interface_number); // throw
 	void release_interface(uint_t interface_number); // throw

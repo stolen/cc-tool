@@ -26,6 +26,8 @@ public:
 
 protected:
 	virtual void init_options(po::options_description &);
+
+	/// @return false if application should exit
 	virtual bool read_options(const po::options_description &, const po::variables_map &);
 	virtual void process_tasks();
 

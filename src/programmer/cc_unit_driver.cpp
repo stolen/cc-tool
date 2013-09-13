@@ -19,11 +19,42 @@
 
 typedef boost::crc_optimal<16, 0x8005, 0xFFFF, 0, false, false> CrcCalculator;
 
+const size_t MAX_EMPTY_BLOCK_SIZE = FLASH_BANK_SIZE;
+static uint8_t empty_block_[MAX_EMPTY_BLOCK_SIZE];
+
 //==============================================================================
 CC_UnitDriver::CC_UnitDriver(USB_Device &programmer, ProgressWatcher &pw) :
+
 	usb_device_(programmer),
-	pw_(pw)
-{ }
+	pw_(pw),
+	endpoint_in_(0),
+	endpoint_out_(0)
+{
+	memset(empty_block_, FLASH_EMPTY_BYTE, FLASH_BANK_SIZE);
+}
+
+//==============================================================================
+void CC_UnitDriver::set_programmer_ID(const USB_DeviceID& programmer_ID)
+{
+	endpoint_in_ = programmer_ID.endpoint_in;
+	endpoint_out_ = programmer_ID.endpoint_out;
+}
+
+//==============================================================================
+bool CC_UnitDriver::set_flash_size(uint_t flash_size)
+{
+	bool found = std::find(
+			unit_info_.flash_sizes.begin(),
+			unit_info_.flash_sizes.end(),
+			flash_size) != unit_info_.flash_sizes.end();
+
+	if (!unit_info_.flash_size && found)
+	{
+		unit_info_.flash_size = flash_size;
+		return true;
+	}
+	return false;
+}
 
 //==============================================================================
 void CC_UnitDriver::reset(bool debug_mode)
@@ -46,8 +77,8 @@ void CC_UnitDriver::read_debug_status(uint8_t &status)
 
 	status = 0;
 
-	usb_device_.bulk_write(ENDPOINT_OUT, sizeof(command), command);
-	usb_device_.bulk_read(ENDPOINT_IN, 1, &status);
+	usb_device_.bulk_write(endpoint_out_, sizeof(command), command);
+	usb_device_.bulk_read(endpoint_in_, 1, &status);
 
 	log_info("programmer, debug status, %02Xh", status);
 }
@@ -59,8 +90,8 @@ void CC_UnitDriver::read_debug_config(uint8_t &config)
 
 	uint8_t command[] = { 0x1F, DEBUG_COMMAND_RD_CONFIG };
 
-	usb_device_.bulk_write(ENDPOINT_OUT, sizeof(command), command);
-	usb_device_.bulk_read(ENDPOINT_IN, 1, &config);
+	usb_device_.bulk_write(endpoint_out_, sizeof(command), command);
+	usb_device_.bulk_read(endpoint_in_, 1, &config);
 
 	log_info("programmer, debug config, %02Xh", config);
 }
@@ -72,17 +103,35 @@ void CC_UnitDriver::write_debug_config(uint8_t config)
 
 	uint8_t command[] = { 0x4C, DEBUG_COMMAND_WR_CONFIG, config };
 
-	usb_device_.bulk_write(ENDPOINT_OUT, sizeof(command), command);
+	usb_device_.bulk_write(endpoint_out_, sizeof(command), command);
 }
 
 //==============================================================================
-void CC_UnitDriver::erase_start()
+bool CC_UnitDriver::erase_page(uint_t page_offset)
+{
+	page_offset /= reg_info_.flash_word_size;
+
+	write_xdata_memory(reg_info_.faddrl, 0);
+	write_xdata_memory(reg_info_.faddrh, HIBYTE(page_offset));
+
+	// erase
+	write_xdata_memory(reg_info_.fctl, FCTL_ERASE);
+
+	// wait for write to finish
+	uint8_t reg;
+	while ((reg = read_xdata_memory(reg_info_.fctl)) & FCTL_BUSY);
+
+	return !(reg & FCTL_ABORT);
+}
+
+//==============================================================================
+void CC_UnitDriver::erase()
 {
 	log_info("programmer, erase");
 
 	uint8_t command[] = { 0x1C, DEBUG_COMMAND_CHIP_ERASE };
 
-	usb_device_.bulk_write(ENDPOINT_OUT, sizeof(command), command);
+	usb_device_.bulk_write(endpoint_out_, sizeof(command), command);
 }
 
 //==============================================================================
@@ -99,7 +148,7 @@ void CC_UnitDriver::write_sfr(uint8_t address, uint8_t value)
 	vector_append(command, mov_a_direct, sizeof(mov_a_direct));
 	vector_append(command, footer, sizeof(footer));
 
-	usb_device_.bulk_write(ENDPOINT_OUT, command.size(), &command[0]);
+	usb_device_.bulk_write(endpoint_out_, command.size(), &command[0]);
 }
 
 //==============================================================================
@@ -116,8 +165,8 @@ void CC_UnitDriver::read_sfr(uint8_t address, uint8_t &value)
 	vector_append(command, mov_a_direct, sizeof(mov_a_direct));
 	vector_append(command, footer, sizeof(footer));
 
-	usb_device_.bulk_write(ENDPOINT_OUT, command.size(), &command[0]);
-	usb_device_.bulk_read(ENDPOINT_IN, 1, &value);
+	usb_device_.bulk_write(endpoint_out_, command.size(), &command[0]);
+	usb_device_.bulk_read(endpoint_in_, 1, &value);
 
 	log_info("programmer, sfr value: %02Xh", value);
 }
@@ -166,10 +215,24 @@ void CC_UnitDriver::read_xdata_memory(uint16_t address, size_t count, ByteVector
 
 	data.resize(count);
 
-	usb_device_.bulk_write(ENDPOINT_OUT, command.size(), &command[0]);
-	usb_device_.bulk_read(ENDPOINT_IN, count, &data[0]);
+	usb_device_.bulk_write(endpoint_out_, command.size(), &command[0]);
+	usb_device_.bulk_read(endpoint_in_, count, &data[0]);
 
 	log_info("programmer, read xdata memory, data: %s", binary_to_hex(&data[0], count, " ").c_str());
+}
+
+//==============================================================================
+bool CC_UnitDriver::flash_image_embed_mac_address(DataSectionStore &sections,
+		const ByteVector &mac_address)
+{
+	return false;
+}
+
+//==============================================================================
+bool CC_UnitDriver::flash_image_embed_lock_data(DataSectionStore &sections,
+		const ByteVector &lock_data)
+{
+	return false;
 }
 
 //==============================================================================
@@ -178,10 +241,6 @@ void CC_UnitDriver::read_info_page(ByteVector &info_page)
 
 //==============================================================================
 void CC_UnitDriver::mac_address_read(size_t index, ByteVector &mac_address)
-{ }
-
-//==============================================================================
-void CC_UnitDriver::mac_address_write(ByteVector &mac_address)
 { }
 
 //==============================================================================
@@ -203,7 +262,7 @@ void CC_UnitDriver::write_xdata_memory(uint16_t address, const uint8_t data[], s
 
 	uint8_t footer[] = { 0xD4, 0x57, 0x90, 0xC2, 0x57, 0x75, 0x92, 0x90, 0x56, 0x74 };
 
-	uint8_t load_dtpr[] 	= { 0xBE, 0x57, 0x90, address >> 8, address };
+	uint8_t load_dtpr[] 	= { 0xBE, 0x57, 0x90, HIBYTE(address), LOBYTE(address) };
 	uint8_t mov_a_data[] 	= { 0x8E, 0x56, 0x74, 0x00 };
 	uint8_t mov_dtpr_a[]	= { 0x5E, 0x55, 0xF0 };
 	uint8_t inc_dtpr[] 		= { 0x5E, 0x55, 0xA3 };
@@ -221,7 +280,7 @@ void CC_UnitDriver::write_xdata_memory(uint16_t address, const uint8_t data[], s
 	}
 	vector_append(command, footer, sizeof(footer));
 
-	usb_device_.bulk_write(ENDPOINT_OUT, command.size(), &command[0]);
+	usb_device_.bulk_write(endpoint_out_, command.size(), &command[0]);
 }
 
 //==============================================================================
@@ -252,6 +311,7 @@ bool CC_UnitDriver::flash_verify_by_read(const DataSectionStore &section_store)
 		flash_read_block(item.address, item.size(), data);
 		if (memcmp(&data[0], &item.data[0], item.size()))
 		{
+			//binary_file_save("vr.bin", data);
 			result = false;
 			break;
 		}
@@ -261,7 +321,7 @@ bool CC_UnitDriver::flash_verify_by_read(const DataSectionStore &section_store)
 
 	pw_.read_finish();
 
-	return true;
+	return result;
 }
 
 //==============================================================================
@@ -368,16 +428,13 @@ static void create_read_proc(size_t count, ByteVector &proc)
 }
 
 //==============================================================================
-void CC_UnitDriver::flash_read_32k(size_t address, size_t size, ByteVector &data)
+void CC_UnitDriver::flash_read_near(uint16_t address, size_t size, ByteVector &data)
 {
-	if (((address % 0x8000) + size) > 0x8000)
-		throw std::runtime_error("flash_read_32k, incorrect parameters");
-
-	const uint8_t load_dtpr[] = { 0xBE, 0x57, 0x90, address >> 8, address };
-	usb_device_.bulk_write(ENDPOINT_OUT, sizeof(load_dtpr), load_dtpr);
+	const uint8_t load_dtpr[] = { 0xBE, 0x57, 0x90, HIBYTE(address), LOBYTE(address) };
+	usb_device_.bulk_write(endpoint_out_, sizeof(load_dtpr), load_dtpr);
 
 	size_t offset = data.size();
-	data.resize(offset + size, 0xFF);
+	data.resize(offset + size, FLASH_EMPTY_BYTE);
 
 	ByteVector command;
 	for (size_t i = 0; i < size / FLASH_READ_CHUNK_SIZE; i++)
@@ -385,8 +442,8 @@ void CC_UnitDriver::flash_read_32k(size_t address, size_t size, ByteVector &data
 		if (command.empty())
 			create_read_proc(FLASH_READ_CHUNK_SIZE, command);
 
-		usb_device_.bulk_write(ENDPOINT_OUT, command.size(), &command[0]);
-		usb_device_.bulk_read(ENDPOINT_IN, FLASH_READ_CHUNK_SIZE, &data[offset]);
+		usb_device_.bulk_write(endpoint_out_, command.size(), &command[0]);
+		usb_device_.bulk_read(endpoint_in_, FLASH_READ_CHUNK_SIZE, &data[offset]);
 		offset += FLASH_READ_CHUNK_SIZE;
 
 		pw_.read_progress(FLASH_READ_CHUNK_SIZE);
@@ -396,16 +453,15 @@ void CC_UnitDriver::flash_read_32k(size_t address, size_t size, ByteVector &data
 	{
 		create_read_proc(size % FLASH_READ_CHUNK_SIZE, command);
 
-		usb_device_.bulk_write(ENDPOINT_OUT, command.size(), &command[0]);
-		usb_device_.bulk_read(ENDPOINT_IN, size - offset, &data[offset]);
+		usb_device_.bulk_write(endpoint_out_, command.size(), &command[0]);
+		usb_device_.bulk_read(endpoint_in_, size - offset, &data[offset]);
 
 		pw_.read_progress(size - offset);
 	}
 }
 
 //==============================================================================
-void CC_UnitDriver::flash_large_read_block(size_t offset, size_t size,
-		ByteVector &flash_data)
+void CC_UnitDriver::flash_read(size_t offset, size_t size, ByteVector &flash_data)
 {
 	uint8_t flash_bank = 0xFF;
 
@@ -426,7 +482,7 @@ void CC_UnitDriver::flash_large_read_block(size_t offset, size_t size,
 			bank_offset = offset % FLASH_BANK_SIZE;
 		}
 
-		flash_read_32k(bank_offset + reg_info_.xbank_offset, count, flash_data);
+		flash_read_near(bank_offset + reg_info_.xbank_offset, count, flash_data);
 
 		size -= count;
 		offset += count;
@@ -441,7 +497,7 @@ void CC_UnitDriver::flash_read_start()
 	uint8_t byte = 0;
 	usb_device_.control_read(LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_IN,
 			USB_PREPARE, 0, 0, &byte, 1);
-	reset(true);
+	//reset(true); // if write and lock verifing will fail after reset
 
 	uint8_t header[] = {
 		0x40, 0x55, 0x00, 0x72, 0x56, 0xE5, 0xD0, 0x74, 0x56, 0xE5, 0x92, 0xBE,
@@ -449,7 +505,7 @@ void CC_UnitDriver::flash_read_start()
 		0x7A, 0x56, 0xE5, 0x9F
 	};
 
-	usb_device_.bulk_write(ENDPOINT_OUT, sizeof(header), header);
+	usb_device_.bulk_write(endpoint_out_, sizeof(header), header);
 }
 
 //==============================================================================
@@ -459,7 +515,7 @@ void CC_UnitDriver::flash_read_end()
 			0xCA, 0x57, 0x75, 0x9F, 0xD6, 0x57, 0x90, 0xC4, 0x57,
 			0x75, 0x92, 0xC2, 0x57, 0x75, 0xD0, 0x90, 0x56, 0x74
 	};
-	usb_device_.bulk_write(ENDPOINT_OUT, sizeof(command), command);
+	usb_device_.bulk_write(endpoint_out_, sizeof(command), command);
 }
 
 //==============================================================================
@@ -479,8 +535,74 @@ void CC_UnitDriver::write_lock_to_info_page(uint8_t lock_byte)
 }
 
 //==============================================================================
+uint_t CC_UnitDriver::lock_data_size() const
+{
+	return reg_info_.lock_size;
+}
+
+//==============================================================================
+UnitCoreInfo CC_UnitDriver::get_reg_info()
+{	return reg_info_; }
+
+//==============================================================================
 void CC_UnitDriver::set_reg_info(const UnitCoreInfo &reg_info)
 {	reg_info_ = reg_info; }
+
+//==============================================================================
+bool CC_UnitDriver::empty_block(const uint8_t* data, size_t size)
+{
+	if (size <= MAX_EMPTY_BLOCK_SIZE)
+		return memcmp(data, empty_block_, size) == 0;
+
+	ByteVector empty_block;
+	empty_block.resize(size, FLASH_EMPTY_BYTE);
+	return memcmp(data, &empty_block[0], size) == 0;
+}
+
+//==============================================================================
+void CC_UnitDriver::convert_lock_data_std_set(
+		const StringVector& qualifiers,
+		const ByteVector& lock_sizes,
+		ByteVector& lock_data)
+{
+	ByteVector data(1, 0x1F);
+
+	foreach (const String &item, qualifiers)
+	{
+		if (item == "debug")
+			data[0] &= ~1;
+		else
+		if (item == "boot")
+			data[0] &= ~0x10;
+		else
+		if (item == "flash" || item == "pages")
+			data[0] &= ~0x0E;
+		else
+		if (item.find("flash:") == 0)
+		{
+			uint_t size = 0;
+			String arg = item.substr(ARRAY_SIZE("flash:") - 1);
+			if (!string_to_number(arg, size))
+				throw std::runtime_error("incorrect flash size value");
+
+			ByteVector::const_iterator it = std::find(
+					lock_sizes.begin(),
+					lock_sizes.end(),
+					size);
+
+			if (it == lock_sizes.end())
+				throw std::runtime_error("target unsupport flash size " + arg);
+
+			uint8_t index = (uint8_t)(it - lock_sizes.begin());
+
+			data[0] &= ~(7 << 1); // clear out prev lock size data
+			data[0] |= (~index & 0x07) << 1;
+		}
+		else
+			throw std::runtime_error("unknown lock qualifyer: " + item);
+	}
+	lock_data = data;
+}
 
 //==============================================================================
 void CC_UnitDriver::write_flash_slow(const DataSectionStore &section_store)
@@ -506,40 +628,36 @@ void CC_UnitDriver::write_flash_slow(const DataSectionStore &section_store)
 	write_xdata_memory(reg_info_.dma0_cfgl, LOBYTE(reg_info_.dma0_cfg_offset));
 	write_xdata_memory(reg_info_.dma0_cfgh, HIBYTE(reg_info_.dma0_cfg_offset));
 
-	size_t faddr = 0xFFFF;
+	size_t faddr = (size_t)-1;
 
 	ByteVector data;
-	section_store.create_image(0xFF, data);
-	data.resize((section_store.upper_address() + (WRITE_BLOCK_SIZE- 1)) &
-			~(WRITE_BLOCK_SIZE - 1), 0xFF);
+	section_store.create_image(FLASH_EMPTY_BYTE, data);
+	data.resize(align_up(section_store.upper_address(), WRITE_BLOCK_SIZE),
+			FLASH_EMPTY_BYTE);
 
 	pw_.write_start(data.size());
-
-	ByteVector empty_block;
-	empty_block.resize(WRITE_BLOCK_SIZE, 0xFF);
 
 	for (size_t i = 0; i < (data.size() / WRITE_BLOCK_SIZE); i++)
 	{
 		pw_.write_progress(WRITE_BLOCK_SIZE);
 
 		size_t offset = WRITE_BLOCK_SIZE * i;
-		if (!memcmp(&data[offset], &empty_block[0], WRITE_BLOCK_SIZE))
+		if (empty_block(&data[offset], WRITE_BLOCK_SIZE))
 			continue;
 
-		size_t new_faddr = WRITE_BLOCK_SIZE * i / reg_info_.flash_word_size;
-		if (new_faddr != faddr)
+		size_t next_faddr = offset / reg_info_.flash_word_size;
+		if (next_faddr != faddr)
 		{
-			faddr = WRITE_BLOCK_SIZE * i / reg_info_.flash_word_size;
-			write_xdata_memory(reg_info_.faddrl, LOBYTE(faddr));
-			write_xdata_memory(reg_info_.faddrh, HIBYTE(faddr));
-			faddr += WRITE_BLOCK_SIZE / reg_info_.flash_word_size;
+			write_xdata_memory(reg_info_.faddrl, LOBYTE(next_faddr));
+			write_xdata_memory(reg_info_.faddrh, HIBYTE(next_faddr));
+			faddr = next_faddr + WRITE_BLOCK_SIZE / reg_info_.flash_word_size;
 		}
 
 		write_xdata_memory(reg_info_.dma_data_offset, &data[offset], WRITE_BLOCK_SIZE);
 
 		write_xdata_memory(reg_info_.dma_arm, 0x01);
 		write_xdata_memory(reg_info_.fctl, reg_info_.fctl_write);
-		while ((read_xdata_memory(reg_info_.fctl) & 0x80));
+		while ((read_xdata_memory(reg_info_.fctl) & FCTL_BUSY));
 	}
 	pw_.write_finish();
 }

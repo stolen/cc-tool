@@ -20,6 +20,7 @@ CC_243x::CC_243x(USB_Device &programmer, ProgressWatcher &pw) :
 {
 	UnitCoreInfo reg_info;
 
+	reg_info.lock_size 			= 1;
 	reg_info.flash_word_size	= 4;
 	reg_info.write_block_size	= 1024;
 	reg_info.verify_block_size	= 1024;
@@ -57,10 +58,14 @@ void CC_243x::supported_units(Unit_ID_List &units)
 void CC_243x::find_unit_info(UnitInfo &unit_info)
 {
 	unit_info.flags = UnitInfo::SUPPORT_MAC_ADDRESS;
-	unit_info.lock_size = 1;
 	unit_info.max_flash_size = 128;
-	unit_info.flash_page_size = 2048;
+	unit_info.flash_page_size = 2;
 	unit_info.mac_address_count = 1;
+	unit_info.mac_address_size = 8;
+
+	unit_info.flash_sizes.push_back(32);
+	unit_info.flash_sizes.push_back(64);
+	unit_info.flash_sizes.push_back(128);
 
 	ByteVector sfr;
 
@@ -69,7 +74,7 @@ void CC_243x::find_unit_info(UnitInfo &unit_info)
 	unit_info.internal_ID = sfr[1];
 
 	// Possible flash sizes: 32, 64, 128
-	log_info("! getting flash size");///
+/*	log_info("! getting flash size begin");///
 
 	unit_info.flash_size = 32;
 	for (uint8_t i = 1; i < 3; i++)
@@ -83,6 +88,9 @@ void CC_243x::find_unit_info(UnitInfo &unit_info)
 		}
 		unit_info.flash_size = 32 << i;
 	}
+
+	log_info("! getting flash size end, result: %u", unit_info.flash_size);///
+*/
 
 	unit_info_ = unit_info;
 }
@@ -98,11 +106,7 @@ bool CC_243x::erase_check_comleted()
 
 //==============================================================================
 void CC_243x::mac_address_read(size_t index, ByteVector &mac_address)
-{	read_xdata_memory(0xDF43, 8, mac_address); }
-
-//==============================================================================
-void CC_243x::mac_address_write(ByteVector &mac_address)
-{ }
+{	read_xdata_memory(0xDF43, unit_info_.mac_address_size, mac_address); }
 
 //==============================================================================
 void CC_243x::flash_write(const DataSectionStore &sections)
@@ -110,11 +114,74 @@ void CC_243x::flash_write(const DataSectionStore &sections)
 
 //==============================================================================
 void CC_243x::flash_read_block(size_t offset, size_t size, ByteVector &data)
-{	flash_large_read_block(offset, size, data); }
+{	flash_read(offset, size, data); }
 
 //==============================================================================
-bool CC_243x::lock_write(const ByteVector &data)
+bool CC_243x::flash_image_embed_mac_address(DataSectionStore &sections,
+		const ByteVector &mac_address)
 {
-	write_lock_to_info_page(data[0]);
+	if (!unit_info_.flash_size)
+		return false;
+
+	const uint_t mac_offset = unit_info_.flash_size * 1024 -
+			unit_info_.mac_address_size;
+
+	DataSection section(mac_offset, mac_address);
+	sections.add_section(section, true);
+	return true;
+}
+
+//==============================================================================
+void CC_243x::convert_lock_data(const StringVector& qualifiers,
+		ByteVector& lock_data)
+{
+	uint8_t lock_size[] = { 0, 2, 4, 8, 16, 32, 64, 128 };
+
+	convert_lock_data_std_set(
+			qualifiers,
+			ByteVector(lock_size, lock_size + ARRAY_SIZE(lock_size)),
+			lock_data);
+}
+
+//==============================================================================
+bool CC_243x::config_write(const ByteVector &mac_address, const ByteVector &lock_data)
+{
+	if (!lock_data.empty())
+		write_lock_to_info_page(lock_data[0]);
+
+	if (!mac_address.empty())
+	{
+		if (!unit_info_.flash_size)
+		{
+			std::cout << "  unable to determine flash size. Writing mac is unsupported" << "\n";
+			return true;
+		}
+
+		CHECK_PARAM(mac_address.size() == unit_info_.mac_address_size);
+
+		const uint_t page_size = unit_info_.flash_page_size * 1024;
+		const uint_t page_offset = unit_info_.flash_size * 1024 - page_size;
+
+		ByteVector block;
+		flash_read_start();
+		flash_read(page_offset, page_size, block);
+		flash_read_end();
+
+		if (!empty_block(&block[0], block.size()))
+			erase_page(page_offset / page_size);
+
+		const uint_t mac_offset = unit_info_.flash_size * 1024 - mac_address.size();
+		memcpy(&block[mac_offset - page_offset], &mac_address[0], mac_address.size());
+
+		DataSectionStore store;
+		store.add_section(DataSection(page_offset, block), true);
+		write_flash_slow(store);
+
+		ByteVector check_block;
+		flash_read_start();
+		flash_read(page_offset, page_size, check_block);
+		flash_read_end();
+		return memcmp(&check_block[0], &block[0], block.size()) == 0;
+	}
 	return true;
 }

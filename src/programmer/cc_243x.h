@@ -22,12 +22,17 @@ public:
 	virtual bool erase_check_comleted();
 
 	virtual void mac_address_read(size_t index, ByteVector &mac_address);
-	virtual void mac_address_write(ByteVector &mac_address);
 
 	virtual void flash_write(const DataSectionStore &sections);
 	virtual void flash_read_block(size_t offset, size_t size, ByteVector &data);
 
-	virtual bool lock_write(const ByteVector &data);
+	virtual bool flash_image_embed_mac_address(DataSectionStore &sections,
+			const ByteVector &mac_address);
+
+	virtual void convert_lock_data(const StringVector& qualifiers,
+			ByteVector& lock_data);
+
+	virtual bool config_write(const ByteVector &mac_address, const ByteVector &lock_data);
 
 	CC_243x(USB_Device &programmer, ProgressWatcher &pw);
 };

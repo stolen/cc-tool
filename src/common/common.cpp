@@ -12,6 +12,12 @@
 #include "common.h"
 
 //==============================================================================
+uint_t align_up(uint_t value, uint_t aligment)
+{
+	return ((value + aligment - 1) / aligment) * aligment;
+}
+
+//==============================================================================
 bool hex_to_binary(const String &hex, ByteVector &out, const char delimiter[])
 {
 	const char *str = hex.c_str();
@@ -81,3 +87,12 @@ String binary_to_hex(const ByteVector &data, const char delimiter[])
 //==============================================================================
 void vector_append(ByteVector &vector, const uint8_t data[], size_t size)
 {	vector.insert(vector.end(), data, data + size); }
+
+//==============================================================================
+String &string_append(String &string, const String &item, const char *delimiter)
+{
+	if (!string.empty())
+		string.append(delimiter);
+
+	return string;
+}
