@@ -1,0 +1,7 @@
+.*.sw?
+Makefile
+libtool
+config.log
+config.status
+*.o
+.dirstamp
