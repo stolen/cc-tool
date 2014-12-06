@@ -73,7 +73,7 @@ void CC_UnitDriver::read_debug_status(uint8_t &status)
 {
 	log_info("programmer, read debug status");
 
-	uint8_t command[] = { 0x1F, DEBUG_COMMAND_READ_STATUS };
+	uint8_t command[] = { 0x1F, DEBUG_COMMAND_READ_STATUS }; // return chip cmd single byte result
 
 	status = 0;
 
@@ -88,7 +88,7 @@ void CC_UnitDriver::read_debug_config(uint8_t &config)
 {
 	log_info("programmer, read debug config");
 
-	uint8_t command[] = { 0x1F, DEBUG_COMMAND_RD_CONFIG };
+	uint8_t command[] = { 0x1F, DEBUG_COMMAND_RD_CONFIG }; // return chip cmd single byte result
 
 	usb_device_.bulk_write(endpoint_out_, sizeof(command), command);
 	usb_device_.bulk_read(endpoint_in_, 1, &config);
@@ -101,7 +101,7 @@ void CC_UnitDriver::write_debug_config(uint8_t config)
 {
 	log_info("programmer, write debug config, %02Xh", config);
 
-	uint8_t command[] = { 0x4C, DEBUG_COMMAND_WR_CONFIG, config };
+	uint8_t command[] = { 0x4C, DEBUG_COMMAND_WR_CONFIG, config }; // drop cmd result
 
 	usb_device_.bulk_write(endpoint_out_, sizeof(command), command);
 }
@@ -129,7 +129,7 @@ void CC_UnitDriver::erase()
 {
 	log_info("programmer, erase");
 
-	uint8_t command[] = { 0x1C, DEBUG_COMMAND_CHIP_ERASE };
+	uint8_t command[] = { 0x1C, DEBUG_COMMAND_CHIP_ERASE }; // drop cmd result
 
 	usb_device_.bulk_write(endpoint_out_, sizeof(command), command);
 }
@@ -139,9 +139,9 @@ void CC_UnitDriver::write_sfr(uint8_t address, uint8_t value)
 {
 	log_info("write sfr at %02Xh, value: %02Xh", address, value);
 
-	uint8_t header[] 		= { 0x40, 0x55, 0x00, };
-	uint8_t mov_a_direct[] 	= { 0xBE, 0x57, 0x75, address, value };
-	uint8_t footer[] 		= { 0x90, 0x56, 0x74 };
+	uint8_t header[] 		= { 0x40, 0x55, 0x00, }; // store acc
+	uint8_t mov_a_direct[] 	= { 0xBE, 0x57, 0x75, address, value }; // write value to sfr addr
+	uint8_t footer[] 		= { 0x90, 0x56, 0x74 }; // restore acc
 
 	ByteVector command;
 	vector_append(command, header, sizeof(header));
@@ -156,9 +156,9 @@ void CC_UnitDriver::read_sfr(uint8_t address, uint8_t &value)
 {
 	log_info("programmer, read sfr at %02Xh", address);
 
-	uint8_t header[] 		= { 0x40, 0x55, 0x00, };
-	uint8_t mov_a_direct[] 	= { 0x7F, 0x56, 0xE5, address };
-	uint8_t footer[] 		= { 0x90, 0x56, 0x74 };
+	uint8_t header[] 		= { 0x40, 0x55, 0x00, }; // store acc
+	uint8_t mov_a_direct[] 	= { 0x7F, 0x56, 0xE5, address }; // return acc after copying addr value to it
+	uint8_t footer[] 		= { 0x90, 0x56, 0x74 }; // restore acc
 
 	ByteVector command;
 	vector_append(command, header, sizeof(header));
@@ -184,21 +184,33 @@ void CC_UnitDriver::read_xdata_memory(uint16_t address, size_t count, ByteVector
 {
 	log_info("programmer, read xdata memory at %04Xh, count: %u", address, count);
 
-	uint8_t header[] = {
-			0x40, 0x55, 0x00, 0x72, 0x56, 0xE5, 0x92, 0xBE, 0x57, 0x75,
-			0x92, 0x00, 0x74, 0x56, 0xE5, 0x83, 0x76, 0x56, 0xE5, 0x82 };
+  uint8_t header[] = {
+    0x40, 0x55, 0x00, // nop + store acc
+    0x72, 0x56, 0xE5, 0x92, // store dps
+    0xBE, 0x57, 0x75, 0x92, 0x00, // set dps = 0
+    0x74, 0x56, 0xE5, 0x83, // store dph0
+    0x76, 0x56, 0xE5, 0x82  // store dpl0
+  };
 
-	uint8_t footer[] 	= { 0xD4, 0x57, 0x90, 0xC2, 0x57, 0x75, 0x92, 0x90, 0x56, 0x74 };
+  uint8_t footer[]  = {
+    0xD4, 0x57, 0x90, /*dph0, dpl0*/  // restore dptr
+    0xC2, 0x57, 0x75, 0x92, /*dps*/   // restore dps
+    0x90, 0x56, 0x74 /*acc*/          // restore acc
+  };
 
-	uint8_t load_dtpr[] = { 0xBE, 0x57, 0x90, 0x00, 0x00 };
-	uint8_t mov_a_dtpr[] = { 0x4E, 0x55, 0xE0 };
-	uint8_t inc_dtpr[] 	= { 0x5E, 0x55, 0xA3 };
+  uint8_t load_dtpr[] = {
+    0xBE, 0x57, 0x90, HIBYTE(address), LOBYTE(address) // set dptr = address
+  };
+  uint8_t mov_a_dtpr[] = {
+    0x4E, 0x55, 0xE0 // fetch and accumulate value at dptr
+  };
+  uint8_t inc_dtpr[]  = {
+    0x5E, 0x55, 0xA3 // inc dptr
+  };
 
 	ByteVector command;
 	vector_append(command, header, sizeof(header));
 
-	load_dtpr[sizeof(load_dtpr) - 1] = address;
-	load_dtpr[sizeof(load_dtpr) - 2] = address >> 8;
 	vector_append(command, load_dtpr, sizeof(load_dtpr));
 
 	for (size_t i = 0; i < count; i++)
@@ -256,16 +268,33 @@ void CC_UnitDriver::write_xdata_memory(uint16_t address, const uint8_t data[], s
 {
 	log_info("programmer, write xdata memory at %04Xh, count: %u", address, size);
 
-	uint8_t header[] = {
-			0x40, 0x55, 0x00, 0x72, 0x56, 0xE5, 0x92, 0xBE, 0x57, 0x75, 0x92, 0x00,
-			0x74, 0x56, 0xE5, 0x83, 0x76, 0x56, 0xE5, 0x82 };
+  /* Notice: header (saving registers) and footer (restoring registers) are identical to reading xdata memory */
+  uint8_t header[] = {
+    0x40, 0x55, 0x00, // nop + store acc
+    0x72, 0x56, 0xE5, 0x92, // store dps
+    0xBE, 0x57, 0x75, 0x92, 0x00, // set dps = 0
+    0x74, 0x56, 0xE5, 0x83, // store dph0
+    0x76, 0x56, 0xE5, 0x82  // store dpl0
+  };
 
-	uint8_t footer[] = { 0xD4, 0x57, 0x90, 0xC2, 0x57, 0x75, 0x92, 0x90, 0x56, 0x74 };
+  uint8_t footer[] = {
+    0xD4, 0x57, 0x90, /*dph0, dpl0*/  // restore dptr
+    0xC2, 0x57, 0x75, 0x92, /*dps*/   // restore dps
+    0x90, 0x56, 0x74 /*acc*/          // restore acc
+  };
 
-	uint8_t load_dtpr[] 	= { 0xBE, 0x57, 0x90, HIBYTE(address), LOBYTE(address) };
-	uint8_t mov_a_data[] 	= { 0x8E, 0x56, 0x74, 0x00 };
-	uint8_t mov_dtpr_a[]	= { 0x5E, 0x55, 0xF0 };
-	uint8_t inc_dtpr[] 		= { 0x5E, 0x55, 0xA3 };
+  uint8_t load_dtpr[] 	= {
+    0xBE, 0x57, 0x90, HIBYTE(address), LOBYTE(address) // set dptr = address
+  };
+  uint8_t mov_a_data[] 	= {
+    0x8E, 0x56, 0x74, 0x00 // set acc = data (data goes instead of 0x00)
+  };
+  uint8_t mov_dtpr_a[]	= {
+    0x5E, 0x55, 0xF0 // write a value to dptr addr
+  };
+  uint8_t inc_dtpr[] 	= {
+    0x5E, 0x55, 0xA3 // inc dptr
+  };
 
 	ByteVector command;
 	vector_append(command, header, sizeof(header));
@@ -411,18 +440,18 @@ uint16_t CC_UnitDriver::calc_block_crc()
 //==============================================================================
 static void create_read_proc(size_t count, ByteVector &proc)
 {
-	uint8_t clr_a[]			= { 0x5E, 0x55, 0xE4 };
-	uint8_t mov_c_a_dptr_a[]= { 0x4E, 0x55, 0x93 };
-	uint8_t inc_dptr[]		= { 0x5E, 0x55, 0xA3 };
+	uint8_t clr_a[]			= { 0x5E, 0x55, 0xE4 };  // clear acc (acc = 0?)
+	uint8_t mov_c_a_dptr_a[]= { 0x4E, 0x55, 0x93 }; // append value at (dptr+a) to buffer
+	uint8_t inc_dptr[]		= { 0x5E, 0x55, 0xA3 }; // inc dptr
 
 	proc.clear();
 	for (size_t i = 0; i < count; i++)
 	{
 		vector_append(proc, clr_a, sizeof(clr_a));
 		if (!((i + 1) % 64) || i == (count - 1))
-			mov_c_a_dptr_a[0] |= 0x01;
+			mov_c_a_dptr_a[0] |= 0x01; // 4E -> 4F -- flush buffer
 		vector_append(proc, mov_c_a_dptr_a, sizeof(mov_c_a_dptr_a));
-		mov_c_a_dptr_a[0] &= ~0x01;
+		mov_c_a_dptr_a[0] &= ~0x01; // 4F -> 4E back
 		vector_append(proc, inc_dptr, sizeof(inc_dptr));
 	}
 }
@@ -430,7 +459,7 @@ static void create_read_proc(size_t count, ByteVector &proc)
 //==============================================================================
 void CC_UnitDriver::flash_read_near(uint16_t address, size_t size, ByteVector &data)
 {
-	const uint8_t load_dtpr[] = { 0xBE, 0x57, 0x90, HIBYTE(address), LOBYTE(address) };
+	const uint8_t load_dtpr[] = { 0xBE, 0x57, 0x90, HIBYTE(address), LOBYTE(address) }; // set dptr = address
 	usb_device_.bulk_write(endpoint_out_, sizeof(load_dtpr), load_dtpr);
 
 	size_t offset = data.size();
@@ -499,11 +528,15 @@ void CC_UnitDriver::flash_read_start()
 			USB_PREPARE, 0, 0, &byte, 1);
 	//reset(true); // if write and lock verifing will fail after reset
 
-	uint8_t header[] = {
-		0x40, 0x55, 0x00, 0x72, 0x56, 0xE5, 0xD0, 0x74, 0x56, 0xE5, 0x92, 0xBE,
-		0x57, 0x75, 0x92, 0x00, 0x76, 0x56, 0xE5, 0x83, 0x78, 0x56, 0xE5, 0x82,
-		0x7A, 0x56, 0xE5, 0x9F
-	};
+  uint8_t header[] = {
+    0x40, 0x55, 0x00, // nop + store acc
+    0x72, 0x56, 0xE5, 0xD0, // store psw
+    0x74, 0x56, 0xE5, 0x92, // store dps
+    0xBE, 0x57, 0x75, 0x92, 0x00, // set dps = 0
+    0x76, 0x56, 0xE5, 0x83, // store dph0
+    0x78, 0x56, 0xE5, 0x82, // store dpl0
+    0x7A, 0x56, 0xE5, 0x9F // store fmap
+  };
 
 	usb_device_.bulk_write(endpoint_out_, sizeof(header), header);
 }
@@ -511,10 +544,13 @@ void CC_UnitDriver::flash_read_start()
 //==============================================================================
 void CC_UnitDriver::flash_read_end()
 {
-	uint8_t command[] = {
-			0xCA, 0x57, 0x75, 0x9F, 0xD6, 0x57, 0x90, 0xC4, 0x57,
-			0x75, 0x92, 0xC2, 0x57, 0x75, 0xD0, 0x90, 0x56, 0x74
-	};
+  uint8_t command[] = {
+    0xCA, 0x57, 0x75, 0x9F, /*fmap*/  // restore fmap
+    0xD6, 0x57, 0x90, /*dph0, dpl0*/  // restore dptr
+    0xC4, 0x57, 0x75, 0x92, /*dps*/   // restore dps
+    0xC2, 0x57, 0x75, 0xD0, /*psw*/   // restore psw
+    0x90, 0x56, 0x74 /*acc*/          // restore acc
+  };
 	usb_device_.bulk_write(endpoint_out_, sizeof(command), command);
 }
 
@@ -570,13 +606,13 @@ void CC_UnitDriver::convert_lock_data_std_set(
 	foreach (const String &item, qualifiers)
 	{
 		if (item == "debug")
-			data[0] &= ~1;
+			data[0] &= ~1; // 0x1E
 		else
 		if (item == "boot")
-			data[0] &= ~0x10;
+			data[0] &= ~0x10; // 0x0F
 		else
 		if (item == "flash" || item == "pages")
-			data[0] &= ~0x0E;
+			data[0] &= ~0x0E; // 0x11
 		else
 		if (item.find("flash:") == 0)
 		{
@@ -595,8 +631,8 @@ void CC_UnitDriver::convert_lock_data_std_set(
 
 			uint8_t index = (uint8_t)(it - lock_sizes.begin());
 
-			data[0] &= ~(7 << 1); // clear out prev lock size data
-			data[0] |= (~index & 0x07) << 1;
+			data[0] &= ~(7 << 1); // clear out prev lock size data // 0x11
+			data[0] |= (~index & 0x07) << 1; // 0x1X, X = index << 1
 		}
 		else
 			throw std::runtime_error("unknown lock qualifyer: " + item);
